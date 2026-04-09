@@ -1,239 +1,97 @@
+// secure_copy.cpp - сжатая версия
 #include <iostream>
 #include <fstream>
 #include <queue>
-#include <pthread.h>
-#include <csignal>
+#include <string>
+#include <vector>
+#include <chrono>
 #include <ctime>
+#include <cstring>
+#include <sys/stat.h>
+#include <pthread.h>
+#include <unistd.h>
 
-// Функции из библиотеки libcaesar.so
-extern "C" {
-    void set_key(char k);
-    void caesar(void* src, void* dst, int len);
-}
+extern "C" { void set_key(char k); void caesar(void* src, void* dst, int len); }
 
-// Глобальный флаг для обработки SIGINT
-volatile sig_atomic_t keep_running = 1;
-
-// Контекст, передаваемый потокам
-struct ThreadContext {
-    std::ifstream* in;
-    std::ofstream* out;
-    pthread_mutex_t mutex;
-    pthread_cond_t cond_prod;   // сигнал для producer (появился свободный блок)
-    pthread_cond_t cond_cons;   // сигнал для consumer (появился заполненный блок)
-
-    static const int NUM_BLOCKS = 4;
-    static const int BLOCK_SIZE = 4096;
-
-    struct Block {
-        char data[BLOCK_SIZE];
-        size_t size;
-    } blocks[NUM_BLOCKS];
-
-    std::queue<Block*> free_blocks;    // очередь свободных блоков
-    std::queue<Block*> filled_blocks;  // очередь заполненных блоков
-    bool producer_finished;             // producer достиг конца файла
-
-    ThreadContext() : in(nullptr), out(nullptr), producer_finished(false) {
-        pthread_mutex_init(&mutex, nullptr);
-        pthread_cond_init(&cond_prod, nullptr);
-        pthread_cond_init(&cond_cons, nullptr);
-        for (int i = 0; i < NUM_BLOCKS; ++i)
-            free_blocks.push(&blocks[i]);
-    }
-
-    ~ThreadContext() {
-        pthread_mutex_destroy(&mutex);
-        pthread_cond_destroy(&cond_prod);
-        pthread_cond_destroy(&cond_cons);
-    }
+struct Shared {
+    pthread_mutex_t mtx;
+    std::queue<std::string> files;
+    int copied;
+    std::string outdir;
+    char key;
+    std::ofstream log;
+    Shared() : mtx(PTHREAD_MUTEX_INITIALIZER), copied(0) {}
+    ~Shared() { pthread_mutex_destroy(&mtx); }
 };
 
-// Поток-производитель: читает, шифрует, передаёт данные
-void* producer_thread(void* arg) {
-    ThreadContext* ctx = static_cast<ThreadContext*>(arg);
+// Безопасный захват с таймаутом 5 сек
+void safe_lock(pthread_mutex_t* m, int tid) {
+    timespec ts;
+    while (true) {
+        clock_gettime(CLOCK_REALTIME, &ts);
+        ts.tv_sec += 5;
+        if (pthread_mutex_timedlock(m, &ts) == 0) return;
+        std::cerr << "Возможная взаимоблокировка: поток " << tid << " ждёт мьютекс >5с\n";
+    }
+}
 
-    while (keep_running) {
-        // 1. Получить свободный блок
-        pthread_mutex_lock(&ctx->mutex);
-        while (ctx->free_blocks.empty() && keep_running) {
-            struct timespec ts;
-            clock_gettime(CLOCK_REALTIME, &ts);
-            ts.tv_nsec += 100000000; // 100 мс
-            if (ts.tv_nsec >= 1000000000) {
-                ts.tv_sec += 1;
-                ts.tv_nsec -= 1000000000;
-            }
-            pthread_cond_timedwait(&ctx->cond_prod, &ctx->mutex, &ts);
-        }
-        if (!keep_running) {
-            pthread_mutex_unlock(&ctx->mutex);
-            break;
-        }
+bool process(const std::string& in, const std::string& outdir, char key) {
+    std::ifstream f(in, std::ios::binary);
+    if (!f) return false;
+    f.seekg(0, std::ios::end);
+    size_t sz = f.tellg();
+    f.seekg(0, std::ios::beg);
+    std::vector<char> buf(sz);
+    if (sz && !f.read(buf.data(), sz)) return false;
+    f.close();
+    if (sz) caesar(buf.data(), buf.data(), sz);
+    std::string out = outdir + "/" + (in.find_last_of("/\\")+1 ? in.substr(in.find_last_of("/\\")+1) : in);
+    std::ofstream o(out, std::ios::binary);
+    if (!o) return false;
+    if (sz) o.write(buf.data(), sz);
+    return true;
+}
 
-        ThreadContext::Block* blk = ctx->free_blocks.front();
-        ctx->free_blocks.pop();
-        pthread_mutex_unlock(&ctx->mutex);
-
-        // 2. Чтение из входного файла
-        ctx->in->read(blk->data, ctx->BLOCK_SIZE);
-        size_t bytes = ctx->in->gcount();
-
-        // Проверка на ошибку чтения или конец файла
-        if (bytes == 0) {
-            if (ctx->in->eof()) {
-                // Нормальный конец файла
-                pthread_mutex_lock(&ctx->mutex);
-                ctx->free_blocks.push(blk);          // вернуть неиспользованный блок
-                ctx->producer_finished = true;
-                pthread_cond_signal(&ctx->cond_cons); // разбудить consumer
-                pthread_mutex_unlock(&ctx->mutex);
-                break;
-            } else {
-                // Ошибка чтения
-                std::cerr << "Error reading input file\n";
-                keep_running = 0;
-                pthread_mutex_lock(&ctx->mutex);
-                ctx->free_blocks.push(blk);
-                pthread_cond_broadcast(&ctx->cond_prod);
-                pthread_cond_broadcast(&ctx->cond_cons);
-                pthread_mutex_unlock(&ctx->mutex);
-                break;
-            }
-        }
-
-        // 3. Шифрование прочитанного блока
-        caesar(blk->data, blk->data, bytes);
-        blk->size = bytes;
-
-        // 4. Передать блок потребителю
-        pthread_mutex_lock(&ctx->mutex);
-        ctx->filled_blocks.push(blk);
-        pthread_cond_signal(&ctx->cond_cons);
-        pthread_mutex_unlock(&ctx->mutex);
+void* worker(void* arg) {
+    auto* sh = (Shared*)((void**)arg)[0];
+    int tid = *(int*)((void**)arg)[1];
+    while (true) {
+        safe_lock(&sh->mtx, tid);
+        if (sh->files.empty()) { pthread_mutex_unlock(&sh->mtx); break; }
+        std::string f = sh->files.front(); sh->files.pop();
+        pthread_mutex_unlock(&sh->mtx);
+        auto start = std::chrono::steady_clock::now();
+        bool ok = process(f, sh->outdir, sh->key);
+        double dur = std::chrono::duration<double>(std::chrono::steady_clock::now()-start).count();
+        char tbuf[20];
+        time_t now = time(nullptr);
+        strftime(tbuf,20,"%Y-%m-%d %H:%M:%S",localtime(&now));
+        safe_lock(&sh->mtx, tid);
+        sh->log << "[" << tbuf << "] [thread " << tid << "] " << f << " " << (ok?"SUCCESS":"ERROR") << " " << dur << "s\n";
+        if (ok) sh->copied++;
+        pthread_mutex_unlock(&sh->mtx);
     }
     return nullptr;
 }
 
-// Поток-потребитель: получает зашифрованные данные и пишет в выходной файл
-void* consumer_thread(void* arg) {
-    ThreadContext* ctx = static_cast<ThreadContext*>(arg);
-
-    while (keep_running) {
-        pthread_mutex_lock(&ctx->mutex);
-        while (ctx->filled_blocks.empty() && !ctx->producer_finished && keep_running) {
-            struct timespec ts;
-            clock_gettime(CLOCK_REALTIME, &ts);
-            ts.tv_nsec += 100000000;
-            if (ts.tv_nsec >= 1000000000) {
-                ts.tv_sec += 1;
-                ts.tv_nsec -= 1000000000;
-            }
-            pthread_cond_timedwait(&ctx->cond_cons, &ctx->mutex, &ts);
-        }
-        if (!keep_running) {
-            pthread_mutex_unlock(&ctx->mutex);
-            break;
-        }
-
-        if (!ctx->filled_blocks.empty()) {
-            ThreadContext::Block* blk = ctx->filled_blocks.front();
-            ctx->filled_blocks.pop();
-            pthread_mutex_unlock(&ctx->mutex);
-
-            // Запись в выходной файл
-            ctx->out->write(blk->data, blk->size);
-            if (!ctx->out->good()) {
-                std::cerr << "Error writing to output file\n";
-                keep_running = 0;
-                pthread_mutex_lock(&ctx->mutex);
-                ctx->free_blocks.push(blk);          // вернуть блок
-                pthread_cond_broadcast(&ctx->cond_prod);
-                pthread_cond_broadcast(&ctx->cond_cons);
-                pthread_mutex_unlock(&ctx->mutex);
-                break;
-            }
-
-            // Вернуть блок в пул свободных
-            pthread_mutex_lock(&ctx->mutex);
-            ctx->free_blocks.push(blk);
-            pthread_cond_signal(&ctx->cond_prod);
-            pthread_mutex_unlock(&ctx->mutex);
-        } else {
-            // producer_finished и нет данных – выход
-            pthread_mutex_unlock(&ctx->mutex);
-            break;
-        }
+int main(int argc, char** argv) {
+    if (argc < 4) { std::cerr << "Usage: " << argv[0] << " file... outdir key\n"; return 1; }
+    Shared sh;
+    sh.outdir = argv[argc-2];
+    sh.key = argv[argc-1][0];
+    set_key(sh.key);
+    mkdir(sh.outdir.c_str(), 0755);
+    sh.log.open("log.txt", std::ios::app);
+    for (int i=1; i<argc-2; ++i) sh.files.push(argv[i]);
+    pthread_t threads[3];
+    void* args[3][2];
+    for (int i=0; i<3; ++i) {
+        args[i][0] = &sh;
+        args[i][1] = new int(i);
+        pthread_create(&threads[i], nullptr, worker, args[i]);
     }
-    return nullptr;
-}
-
-// Обработчик сигнала SIGINT
-void sigint_handler(int) {
-    keep_running = 0;
-}
-
-int main(int argc, char* argv[]) {
-    if (argc != 4) {
-        std::cerr << "Usage: " << argv[0] << " <input> <output> <key>\n";
-        return 1;
-    }
-
-    const char* input_file  = argv[1];
-    const char* output_file = argv[2];
-    char key = argv[3][0];   // первый символ строки ключа
-
-    // Открытие входного файла
-    std::ifstream in(input_file, std::ios::binary);
-    if (!in) {
-        std::cerr << "Cannot open input file: " << input_file << '\n';
-        return 1;
-    }
-
-    // Открытие выходного файла
-    std::ofstream out(output_file, std::ios::binary);
-    if (!out) {
-        std::cerr << "Cannot open output file: " << output_file << '\n';
-        return 1;
-    }
-
-    // Установка ключа шифрования
-    set_key(key);
-
-    // Контекст для потоков
-    ThreadContext ctx;
-    ctx.in = &in;
-    ctx.out = &out;
-
-    // Установка обработчика SIGINT
-    signal(SIGINT, sigint_handler);
-
-    // Запуск потоков
-    pthread_t prod, cons;
-    if (pthread_create(&prod, nullptr, producer_thread, &ctx) != 0) {
-        std::cerr << "Failed to create producer thread\n";
-        return 1;
-    }
-    if (pthread_create(&cons, nullptr, consumer_thread, &ctx) != 0) {
-        std::cerr << "Failed to create consumer thread\n";
-        keep_running = 0;
-        pthread_cancel(prod);      // принудительно остановить первый поток
-        pthread_join(prod, nullptr);
-        return 1;
-    }
-
-    // Ожидание завершения потоков
-    pthread_join(prod, nullptr);
-    pthread_join(cons, nullptr);
-
-    // Закрытие файлов
-    in.close();
-    out.close();
-
-    // Если завершились по SIGINT, вывести сообщение
-    if (!keep_running) {
-        std::cout << "Операция прервана пользователем\n";
-    }
-
+    for (int i=0; i<3; ++i) { pthread_join(threads[i], nullptr); delete (int*)args[i][1]; }
+    sh.log.close();
+    std::cout << "Скопировано файлов: " << sh.copied << " из " << (argc-3) << "\n";
     return 0;
 }
