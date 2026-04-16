@@ -12,7 +12,7 @@ void caesar(void* src, void* dst, int len) - производит шифрова
 
 ## Программа secure_copy:
 
-int main(int argc, char* argv[]) - основная функция программы, производит динамическую загрузку библиотеки, создаёт два потока для чтения в одном и шифрования с записью в другом.
+int main(int argc, char* argv[]) - основная функция программы, производит динамическую загрузку библиотеки, имеет два режима работы: параллельная и последовательная обработка файлов.
 
 # Описание команд
 
@@ -20,6 +20,8 @@ make - сборка проекта
 
 ./secure_copy file1.txt file2.txt file3.txt output_dir/ X - шифрование с ключом X содержимого файлов и запись результата в папку output_dir
 
+./secure_copy --mode=parallel file1.txt file2.txt file3.txt output_dir/ X - шифрование с ключом X содержимого файлов и запись результата в папку output_dir с выбранным режимом работы - параллельная обработка (--mode=sequential для последовательной)
+
 # Примеры использования
 
-<img width="1082" height="279" alt="image" src="https://github.com/user-attachments/assets/1fcc318f-ac37-41ee-b39a-41b92ea7d678" />
+<img width="1079" height="463" alt="image" src="https://github.com/user-attachments/assets/d583d792-4edc-43c1-b0df-e0d02936a5cf" />
