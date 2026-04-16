@@ -111,16 +111,16 @@ Stats parallel(const std::vector<std::string>& files, const std::string& outdir,
         pthread_create(&th[i], nullptr, worker, args[i]);
     }
     double t0 = now_sec();
-    pthread_mutex_lock(&sh.mtx);
+    pthread_mutex_lock(&sh.mtx); //захват мьютекса, для получения доступа к списку файлов и флагу завершения
     while (!sh.files.empty()) {
-        pthread_cond_broadcast(&sh.cond);
-        pthread_mutex_unlock(&sh.mtx);
-        usleep(1000);
-        pthread_mutex_lock(&sh.mtx);
+        pthread_cond_broadcast(&sh.cond); //пробуждение всех потоков, находящихся в ожидании
+        pthread_mutex_unlock(&sh.mtx); //особождение мьютекса для потоков
+        usleep(1000); //короткая пауза, чтобы не загружать процессор пустым циклом
+        pthread_mutex_lock(&sh.mtx); //очередной захват мьютекса для получения главным потоком доступа к списку файлов и флагу
     }
-    sh.stop = true;
-    pthread_cond_broadcast(&sh.cond);
-    pthread_mutex_unlock(&sh.mtx);
+    sh.stop = true; //флаг завершения работы
+    pthread_cond_broadcast(&sh.cond); //пробуждение потоков, чтобы они увидели флаг
+    pthread_mutex_unlock(&sh.mtx); //финальное освобождение мьютекса
     for (int i = 0; i < WORKERS_COUNT; ++i) {
         pthread_join(th[i], nullptr);
         delete (int*)args[i][1];
