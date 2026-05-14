@@ -24,5 +24,6 @@ make - сборка проекта
 
 # Примеры использования
 
-<img width="1082" height="558" alt="image" src="https://github.com/user-attachments/assets/7d82c391-fb0a-457c-afe0-2be208104db9" />
+<img width="1081" height="465" alt="image" src="https://github.com/user-attachments/assets/36daba47-f54b-4460-a29c-a8e26785c0f7" />
+
 
