@@ -1,6 +1,6 @@
 # Общее описание
 
-Проект содержит библиотеку libcaesar, содержащую функции для установки ключа и шифрования/дешифрования, программу secure_copy, Makefile для сборки проекта.
+Проект содержит обновлённую библиотеку libcaesar, содержащую функции для установки ключа и шифрования/дешифрования, программу secure_copy, Makefile для сборки проекта.
 
 # Описание функций
 
@@ -24,4 +24,5 @@ make - сборка проекта
 
 # Примеры использования
 
-<img width="1079" height="463" alt="image" src="https://github.com/user-attachments/assets/d583d792-4edc-43c1-b0df-e0d02936a5cf" />
+<img width="1082" height="558" alt="image" src="https://github.com/user-attachments/assets/7d82c391-fb0a-457c-afe0-2be208104db9" />
+
