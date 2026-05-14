@@ -4,17 +4,18 @@ LDFLAGS  = -shared
 
 TARGET_LIB = libcaesar.so
 COPY_PROG = secure_copy
+TEST_PROG = test_copy
 
 .PHONY: all install
 
 # cборка динамической библиотеки и программы
-all: $(TARGET_LIB) $(TEST_PROG) $(COPY_PROG)
+all: $(TARGET_LIB) $(TEST_PROG) $(COPY_PROG) $(TEST_PROG)
 
 $(TARGET_LIB): libcaesar.cpp
 	$(CXX) $(LDFLAGS) $(CXXFLAGS) -o $@ $^
 	
-# $(TEST_PROG): testpr.cpp
-	# $(CXX) $(CXXFLAGS) testpr.cpp -o $(TEST_PROG) -ldl
+ $(TEST_PROG): test_copy.cpp
+	$(CXX) $(CXXFLAGS) test_copy.cpp -o $(TEST_PROG) -L. -lcaesar
 	
 $(COPY_PROG): secure_copy.cpp
 	$(CXX) $(CXXFLAGS) -pthread secure_copy.cpp -o $(COPY_PROG) -L. -lcaesar

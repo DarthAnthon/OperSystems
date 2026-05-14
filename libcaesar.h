@@ -12,4 +12,6 @@ void cleanup_secure_crypto();
 
 void emergency_cleanup();
 
+void test();
+
 }

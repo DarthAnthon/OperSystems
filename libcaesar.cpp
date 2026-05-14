@@ -234,4 +234,34 @@ void cleanup_secure_crypto() {
 
   initialized = false;
 }
+
+void test(){
+	std::lock_guard<std::mutex> lock(key_mutex);
+
+    if (!initialized) {
+        std::cerr << "Library not initialized\n";
+        exit(EXIT_FAILURE);
+    }
+
+    /*
+     * Убеждаемся, что память закрыта
+     */
+    if (mprotect(
+            protected_key,
+            page_size,
+            PROT_NONE) == -1) {
+
+        perror("mprotect");
+        exit(EXIT_FAILURE);
+    }
+
+    /*
+     * Намеренная ошибка доступа
+     */
+    volatile char* ptr =
+        static_cast<volatile char*>(protected_key);
+
+    ptr[0] = 123;
+
+}
 }
