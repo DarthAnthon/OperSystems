@@ -1,29 +1,40 @@
 # Общее описание
 
-Проект содержит обновлённую библиотеку libcaesar, содержащую функции для установки ключа и шифрования/дешифрования, программу secure_copy, Makefile для сборки проекта.
+Проект содержит обновлённую библиотеку rc4, содержащую функции для установки ключа и шифрования/дешифрования, программу secure_copy, Makefile для сборки проекта и run_tests.sh, содержащий тесты работы программы.
 
 # Описание функций
 
-## Библиотека libcaesar:
+## Библиотека rc4:
 
-void set_key(char key) - устанавливает ключ
+void rc4_init() - Инициализация библиотеки
 
-void caesar(void* src, void* dst, int len) - производит шифрование/дешифрования содержимого буфера src и записывает результат в буфер dsr
+int rc4_state_init(const unsigned char *master_key, size_t master_len, const unsigned char *salt) - Инициализация состояния: KSA + сброс индексов i, j; Память защищается PROT_NONE после инициализации.
+
+int rc4_state_update(int slot, const unsigned char *input, unsigned char *output, size_t length) - Обработка чанка: PRGA с сохранением i, j в защищённой памяти
+
+void rc4_state_free(int slot) - Освобождение состояния: безопасное затирание и закрытие слота
+
+void rc4_crypt(const unsigned char *master_key, size_t master_len, const unsigned char *salt, const unsigned char *input, unsigned char *output, size_t length) - Legacy wrapper для однократного вызова
 
 ## Программа secure_copy:
 
-int main(int argc, char* argv[]) - основная функция программы, производит динамическую загрузку библиотеки, имеет два режима работы: параллельная и последовательная обработка файлов.
+int main(int argc, char* argv[]) - основная функция программы, определяет команду и выполняет её.
 
 # Описание команд
 
 make - сборка проекта
 
-./secure_copy file1.txt file2.txt file3.txt output_dir/ X - шифрование с ключом X содержимого файлов и запись результата в папку output_dir
+./secure_copy -list -image disk.img - Список файлов в образе
 
-./secure_copy --mode=parallel file1.txt file2.txt file3.txt output_dir/ X - шифрование с ключом X содержимого файлов и запись результата в папку output_dir с выбранным режимом работы - параллельная обработка (--mode=sequential для последовательной)
+./secure_copy -add -image disk.img -key "secret" команды.txt - Добавление файлов в образ
+
+./secure_copy -get -image disk.img -key "secret" -out result.txt команды.txt - Извлечение и расшифровка файла
+
+./run_tests.sh - Запуск тестов
 
 # Примеры использования
 
-<img width="1081" height="465" alt="image" src="https://github.com/user-attachments/assets/36daba47-f54b-4460-a29c-a8e26785c0f7" />
+<img width="1482" height="300" alt="image" src="https://github.com/user-attachments/assets/9d801c28-b1a3-4985-911a-a80ea787f6b3" />
+
 
 
