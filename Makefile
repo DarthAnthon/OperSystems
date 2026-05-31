@@ -1,29 +1,41 @@
 CXX      = g++
-CXXFLAGS = -Wall -Wextra -pedantic -fPIC
+CXXFLAGS = -Wall -Wextra -pedantic -fPIC -std=c++11
 LDFLAGS  = -shared
 
-TARGET_LIB = libcaesar.so
-COPY_PROG = secure_copy
-TEST_PROG = test_copy
+TARGET_LIB = librc4.so
+COPY_PROG  = secure_copy
+TEST_PROG  = test_copy
 
-.PHONY: all install
+INSTALL_PATH = /usr/local/lib
 
-# cборка динамической библиотеки и программы
-all: $(TARGET_LIB) $(TEST_PROG) $(COPY_PROG) $(TEST_PROG)
+.PHONY: all install clean test help
 
-$(TARGET_LIB): libcaesar.cpp
-	$(CXX) $(LDFLAGS) $(CXXFLAGS) -o $@ $^
-	
- $(TEST_PROG): test_copy.cpp
-	$(CXX) $(CXXFLAGS) test_copy.cpp -o $(TEST_PROG) -L. -lcaesar
-	
-$(COPY_PROG): secure_copy.cpp
-	$(CXX) $(CXXFLAGS) -pthread secure_copy.cpp -o $(COPY_PROG) -L. -lcaesar
+# Основная цель - собрать все
+all: $(TARGET_LIB) $(COPY_PROG)
 
-# установка библиотеки в системную директорию
-	sudo cp $(TARGET_LIB) /usr/local/lib/
+# Сборка динамической библиотеки RC4
+$(TARGET_LIB): rc4.cpp rc4.h
+	$(CXX) $(LDFLAGS) $(CXXFLAGS) -o $@ rc4.cpp
+
+# Сборка программы secure_copy
+$(COPY_PROG): secure_copy.cpp rc4.h $(TARGET_LIB)
+	$(CXX) $(CXXFLAGS) -pthread secure_copy.cpp -o $(COPY_PROG) \
+		-L. -lrc4 -Wl,-rpath,.
+
+# Установка библиотеки в системную директорию
+install: $(TARGET_LIB)
+	@echo "Installing $(TARGET_LIB) to $(INSTALL_PATH)..."
+	sudo cp $(TARGET_LIB) $(INSTALL_PATH)/
 	sudo ldconfig
+	@echo "Installation complete"
 
-# Очистка
+# Очистка сборочных артефактов
 clean:
-	rm -f $(TARGET_LIB) $(COPY_PROG)
+	rm -f $(TARGET_LIB) $(COPY_PROG) $(TEST_PROG) *.o
+
+# Удаление установленной библиотеки
+uninstall:
+	@echo "Removing $(TARGET_LIB) from $(INSTALL_PATH)..."
+	sudo rm -f $(INSTALL_PATH)/$(TARGET_LIB)
+	sudo ldconfig
+	@echo "Uninstallation complete"
